@@ -10,6 +10,7 @@ import (
 	"testing"
 
 	gogoproto "github.com/gogo/protobuf/proto"
+	"github.com/grafana/mimir/pkg/util/arena"
 	"github.com/prometheus/prometheus/model/histogram"
 	"google.golang.org/grpc/encoding"
 	"google.golang.org/grpc/encoding/proto"
@@ -122,23 +123,6 @@ func (c *codecV2) Marshal(v any) (mem.BufferSlice, error) {
 	return data, nil
 }
 
-// mem.DefaultBufferPool() only has five sizes: 256 B, 4 KB, 16 KB, 32 KB and 1 MB.
-// This means that for messages between 32 KB and 1 MB, we may over-allocate by up to 992 KB,
-// or ~97%. If we have a lot of messages in this range, we can waste a lot of memory.
-// So instead, we create our own buffer pool with more sizes to reduce this wasted space, and
-// also include pools for larger sizes up to 256 MB.
-var unmarshalSlicePool = mem.NewTieredBufferPool(unmarshalSlicePoolSizes()...)
-
-func unmarshalSlicePoolSizes() []int {
-	var sizes []int
-
-	for s := 256; s <= 256<<20; s <<= 1 {
-		sizes = append(sizes, s)
-	}
-
-	return sizes
-}
-
 // Unmarshal unmarshals an object using the global codec. Prefer this over
 // calling the Unmarshal method directly, as it will take advantage of leak
 // detection.
@@ -159,6 +143,12 @@ func (c *codecV2) Unmarshal(data mem.BufferSlice, v any) error {
 		buf = c.maybeInstrumentRefLeaks(data)
 	}
 
+	var a *arena.Arena
+	if ah, ok := v.(ArenaHolder); ok {
+		a = arena.NewArena()
+		ah.SetArena(a)
+	}
+
 	if buf == nil {
 		if len(data) == 1 {
 			// BufferSlice.MaterializeToBuffer already has this behavior when
@@ -167,7 +157,7 @@ func (c *codecV2) Unmarshal(data mem.BufferSlice, v any) error {
 			data[0].Ref()
 			buf = data[0]
 		} else {
-			buf = data.MaterializeToBuffer(unmarshalSlicePool)
+			buf = data.MaterializeToBuffer(unmarshalSlicePool(a))
 		}
 	}
 	// Decrement buf's reference count. Note though that if v implements MessageWithBufferRef,
@@ -225,6 +215,18 @@ func (m *BufferHolder) FreeBuffer() {
 }
 
 var _ MessageWithBufferRef = &BufferHolder{}
+
+type MessageWithArena interface {
+	SetArena(*arena.Arena)
+}
+
+type ArenaHolder struct {
+	arena *arena.Arena
+}
+
+func (m *ArenaHolder) SetArena(a *arena.Arena) {
+	m.arena = a
+}
 
 // MinTimestamp returns the minimum timestamp (milliseconds) among all series
 // in the WriteRequest. Returns math.MaxInt64 if the request is empty.
