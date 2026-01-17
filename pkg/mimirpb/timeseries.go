@@ -16,6 +16,8 @@ import (
 
 	"github.com/prometheus/prometheus/model/labels"
 	"github.com/prometheus/prometheus/util/zeropool"
+
+	"github.com/grafana/mimir/pkg/util/pool"
 )
 
 const (
@@ -649,6 +651,9 @@ func yoloSliceFromPool() *[]byte {
 }
 
 func reuseYoloSlice(val *[]byte) {
+	// Poison the buffer before returning to pool to detect use-after-free bugs.
+	// When built without the poison_pools tag, this is a no-op.
+	pool.PoisonByteSlice(*val)
 	*val = (*val)[:0]
 	yoloSlicePool.Put(val)
 }

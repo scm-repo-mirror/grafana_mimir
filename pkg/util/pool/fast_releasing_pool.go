@@ -47,6 +47,13 @@ func (b *FastReleasingSlabPool[T]) Release(slabID int) {
 	defer func() {
 		// Return of the slab is done via defer, so that it can be done outside the lock.
 		if slabToRelease != nil {
+			// Poison the slab before returning to pool to detect use-after-free bugs.
+			// When built without the poison_pools tag, this is a no-op.
+			// We use type assertion to check if the slab is []byte since that's
+			// the type used for request buffers that back yolo strings.
+			if bs, ok := any(slabToRelease).([]byte); ok {
+				PoisonByteSlice(bs)
+			}
 			b.delegate.Put(slabToRelease)
 		}
 	}()

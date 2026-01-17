@@ -1608,6 +1608,10 @@ func (i *Ingester) pushSamplesToAppender(
 	defer idx.Close()
 
 	for _, ts := range timeseries {
+		// Validate that labels don't contain poison bytes, which would indicate a
+		// use-after-free bug. This is a no-op when built without poison_pools tag.
+		mimirpb.ValidateLabelsNotPoisoned(ts.Labels)
+
 		// The labels must be sorted (in our case, it's guaranteed a write request
 		// has sorted labels once hit the ingester).
 
