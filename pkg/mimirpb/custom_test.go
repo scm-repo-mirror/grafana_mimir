@@ -236,3 +236,37 @@ func TestHistogram_BucketsCount(t *testing.T) {
 		})
 	}
 }
+
+func TestBufferHolder_FreeBuffer_PanicsOnDoubleFree(t *testing.T) {
+	// Create a buffer via unmarshalling.
+	var c codecV2
+	var origReq WriteRequest
+	data, err := c.Marshal(&origReq)
+	require.NoError(t, err)
+
+	var req WriteRequest
+	require.NoError(t, c.Unmarshal(data, &req))
+	require.NotNil(t, req.Buffer())
+
+	// First FreeBuffer should work.
+	req.FreeBuffer()
+
+	// Buffer should be nil after FreeBuffer.
+	assert.Nil(t, req.Buffer())
+
+	// Second FreeBuffer should panic.
+	assert.PanicsWithValue(t, "BufferHolder.FreeBuffer called on already-freed buffer", func() {
+		req.FreeBuffer()
+	})
+}
+
+func TestBufferHolder_FreeBuffer_NoOpIfNeverHadBuffer(t *testing.T) {
+	// A freshly created BufferHolder with no buffer should not panic.
+	var holder BufferHolder
+	assert.Nil(t, holder.Buffer())
+
+	// FreeBuffer should be a no-op, not panic.
+	assert.NotPanics(t, func() {
+		holder.FreeBuffer()
+	})
+}
